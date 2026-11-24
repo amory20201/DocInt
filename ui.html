@@ -1,0 +1,60 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DocInt - Document Intelligence</title>
+<style>
+:root{--bg:#f4f7fc;--card:#fff;--ink:#0f1b3d;--mut:#64708a;--blue:#2563eb;--ok:#16a34a;--okb:#dcfce7;--unc:#d97706;--uncb:#fef3c7;--mis:#dc2626;--misb:#fee2e2}
+*{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+header{padding:28px 24px 8px;text-align:center}h1{margin:0;font-size:30px}h1 span{color:var(--blue)}p.sub{color:var(--mut);margin:6px 0 0}
+main{max-width:1100px;margin:20px auto;padding:0 16px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:20px}
+@media(max-width:820px){main{grid-template-columns:minmax(0,1fr)}}
+.card{background:var(--card);border-radius:18px;padding:20px;box-shadow:0 4px 24px #1e3a8a14}
+#drop{border:2px dashed #b6c4e4;border-radius:14px;padding:28px;text-align:center;color:var(--mut);cursor:pointer}
+#drop.on{background:#eaf1ff;border-color:var(--blue)}#preview{max-width:100%;max-height:260px;margin-top:12px;border-radius:10px}
+label{font-weight:600;font-size:14px;display:block;margin:14px 0 6px}textarea,select{width:100%;padding:10px;border:1px solid #cdd6ea;border-radius:10px;font:inherit}
+button{margin-top:16px;width:100%;padding:12px;border:0;border-radius:12px;background:var(--blue);color:#fff;font-size:16px;font-weight:600;cursor:pointer}button:disabled{opacity:.5}
+.row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #edf1f9}.row b{font-weight:600}
+.badge{padding:3px 10px;border-radius:99px;font-size:12px;font-weight:700}.ok{background:var(--okb);color:var(--ok)}.uncertain{background:var(--uncb);color:var(--unc)}.missing{background:var(--misb);color:var(--mis)}
+.val{display:flex;gap:10px;align-items:center}.conf{color:var(--mut);font-size:12px;width:38px;text-align:right}
+.banner{padding:12px 14px;border-radius:12px;margin:12px 0;font-weight:600}.banner.good{background:var(--okb);color:var(--ok)}.banner.warn{background:var(--uncb);color:var(--unc)}.banner.bad{background:var(--misb);color:var(--mis)}
+.issue{font-size:13px;color:#7a4a00;margin:4px 0}pre{background:#0f172a;color:#d6e2ff;padding:14px;border-radius:12px;overflow:auto;font-size:12px;max-height:320px}
+h3{margin:18px 0 6px}.qa{background:#f6f8fd;border-radius:10px;padding:10px;margin:8px 0;font-size:14px}.qa small{color:var(--mut)}
+</style></head><body>
+<header><h1><span>DocInt:</span> Multimodal Document Intelligence</h1><p class="sub">Upload a PDF or image &rarr; classify, extract fields, answer questions, flag uncertainty</p></header>
+<main>
+<section class="card">
+  <div id="drop">Drop a PDF / JPG / PNG here or click to choose<input id="file" type="file" accept=".pdf,image/*" hidden></div>
+  <img id="preview" hidden alt="preview">
+  <label for="q">Questions (one per line, optional)</label>
+  <textarea id="q" rows="3" placeholder="What is the total amount?&#10;Who is the customer?"></textarea>
+  <label for="eng">Engine</label>
+  <select id="eng"><option value="auto">Auto (Claude if API key is set, else local)</option><option value="claude">Claude vision</option><option value="local">Local OCR + rules (offline)</option></select>
+  <button id="go" disabled>Analyze document</button>
+</section>
+<section class="card" id="out"><p style="color:var(--mut)">Results appear here.</p></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);let file=null;
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function pick(f){file=f;$("go").disabled=!f;$("drop").firstChild.textContent=f.name;
+ if(f.type.startsWith("image/")){$("preview").src=URL.createObjectURL(f);$("preview").hidden=false}else $("preview").hidden=true}
+$("drop").onclick=()=>$("file").click();$("file").onchange=e=>pick(e.target.files[0]);
+$("drop").ondragover=e=>{e.preventDefault();$("drop").classList.add("on")};$("drop").ondragleave=()=>$("drop").classList.remove("on");
+$("drop").ondrop=e=>{e.preventDefault();$("drop").classList.remove("on");pick(e.dataTransfer.files[0])};
+$("go").onclick=async()=>{
+ $("go").disabled=true;$("go").textContent="Analyzing...";
+ const qs=$("q").value.split("\n").map(s=>s.trim()).filter(Boolean);
+ try{const r=await fetch("/api/analyze",{method:"POST",headers:{"X-Filename":encodeURIComponent(file.name),"X-Engine":$("eng").value,"X-Questions":encodeURIComponent(JSON.stringify(qs))},body:file});
+  const j=await r.json();render(j)}catch(e){$("out").innerHTML='<div class="banner bad">'+esc(e)+'</div>'}
+ $("go").disabled=false;$("go").textContent="Analyze document"};
+function badge(s){return `<span class="badge ${s}">${s}</span>`}
+function render(j){
+ if(j.error){$("out").innerHTML='<div class="banner bad">'+esc(j.error)+'</div>';return}
+ const v=j.validation,cls=!v.is_valid?"bad":v.needs_review?"warn":"good",
+ msg=!v.is_valid?"Invalid - required information is missing":v.needs_review?"Needs human review":"All fields valid";
+ let h=`<div class="banner ${cls}">${msg}</div><div class="row"><b>Document Type</b><span class="val">${esc(j.document_type.value)} ${badge(j.document_type.status)}<span class="conf">${j.document_type.confidence}</span></span></div>`;
+ for(const[k,f]of Object.entries(j.fields))h+=`<div class="row"><b>${k.replace("_"," ")}</b><span class="val">${f.value===null?"-":esc(f.value)} ${badge(f.status)}<span class="conf">${f.confidence}</span></span></div>`;
+ h+=`<h3>Summary</h3><p>${esc(j.summary)}</p>`;
+ if(v.issues.length)h+="<h3>Issues</h3>"+v.issues.map(i=>`<div class="issue">&#9888; ${esc(i.message)}</div>`).join("");
+ if(j.answers.length)h+="<h3>Answers</h3>"+j.answers.map(a=>`<div class="qa"><b>${esc(a.question)}</b><br>${esc(a.answer)} ${badge(a.status)}<br><small>${esc(a.evidence)}</small></div>`).join("");
+ h+=`<h3>Structured JSON</h3><pre>${esc(JSON.stringify(j,null,2))}</pre><small>Engine: ${esc(j.engine)}</small>`;
+ $("out").innerHTML=h}
+</script></body></html>
